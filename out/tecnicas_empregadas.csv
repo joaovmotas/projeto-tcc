@@ -1,0 +1,13 @@
+Classificação,Número de Artigos
+Logistic Regression,30
+Random Forest,17
+Decision Tree,16
+Support Vector Machine,13
+Naive Bayes,12
+KNN,10
+Neural Network,9
+XGBoost,6
+ANN,2
+LightGBM,2
+Baysian Networks,1
+Multi Layer Perceptrons,1
