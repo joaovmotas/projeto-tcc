@@ -1,20 +1,30 @@
 # -*- coding: utf-8 -*-
 """
-Python 3.12 — Processa múltiplos CSVs de bases (ex.: artigos_selecionados_IEEE.csv, artigos_selecionados_SpringerLink.csv)
-e gera saídas por base e agregadas (TodasBases).
+FIX: contagem de nulos em 'Dados Utilizados' estava inflada porque o código
+convertia a série para string (.astype(str)), transformando NaN em 'nan'.
+Isso fazia 'nan' virar uma "classe" válida e ser contada.
 
-Saída por base (dentro de out/<NOMEDABASE>/):
-- contribuicao_trabalho_<NOMEDABASE>.csv
-- dados_utilizados_<NOMEDABASE>.csv
-- dados_utilizados_combinados_<NOMEDABASE>.csv
-- tecnicas_empregadas_<NOMEDABASE>.csv
-(REMOVIDO: não gera mais "dados_utilizados.csv" sem sufixo por base)
+Correção:
+- NÃO converter mais a série para string antes do split.
+- Manter valores NaN como NaN e descartá-los corretamente em split_items().
+- Ajuste aplicado também na contagem de combinações.
 
-Saída agregada (dentro de out/TodasBases/):
-- contribuica_trabalho.csv
-- dados_utilizados.csv
-- dados_utilizados_combinados.csv
-- tecnicas_empregadas.csv
+Inclui um modo de DIAGNÓSTICO que mostra:
+- Quantos NaN verdadeiros existem na coluna.
+- Quais linhas seriam consideradas "vazias" pelo pipeline de split/normalize.
+- Exporta um CSV com essas linhas para conferência em ./out/<Base>/debug_vazios_<Base>.csv
+
+Python 3.12 — Processa múltiplos CSVs de bases e gera:
+- Por base (out/<Base>/):
+    * contribuicao_trabalho_<Base>.csv
+    * dados_utilizados_<Base>.csv
+    * dados_utilizados_combinados_<Base>.csv
+    * tecnicas_empregadas_<Base>.csv
+- Agregado (out/TodasBases/):
+    * contribuica_trabalho.csv
+    * dados_utilizados.csv
+    * dados_utilizados_combinados.csv
+    * tecnicas_empregadas.csv
 """
 
 from __future__ import annotations
@@ -29,10 +39,9 @@ import pandas as pd
 
 
 # ========== CONFIGURAÇÃO ==========
-INPUT_DIR = Path("./artigos_selecionados")     # Raiz onde estão os CSVs de entrada
-DISCOVER_PATTERNS = ["*.csv"]     # Padrões de descoberta
-OUT_ROOT = Path("./out")          # Pasta de saída
-# ==================================
+INPUT_DIR = Path("./artigos_selecionados")      # Onde estão os CSVs de entrada
+DISCOVER_PATTERNS = ["*.csv"]      # Padrões de descoberta
+OUT_ROOT = Path("./out")           # Pasta de saída
 
 
 # ---------- Utilidades de IO ----------
@@ -124,10 +133,11 @@ def find_column(df: pd.DataFrame, candidates: list[str]) -> str:
 
 
 # ---------- Parsing de itens ----------
-def split_items(cell: str) -> list[str]:
+def split_items(cell) -> list[str]:
     """
     Divide uma célula em itens usando separadores comuns.
     NÃO divide por ' e ' para não quebrar nomes compostos.
+    *IMPORTANTE*: NÃO converte previamente para string; se for NaN, retorna [].
     """
     if pd.isna(cell):
         return []
@@ -135,13 +145,14 @@ def split_items(cell: str) -> list[str]:
     return [p.strip() for p in parts if p and p.strip()]
 
 
-# ---------- Contagens ----------
+# ---------- Contagens (CORRIGIDAS: sem astype(str)) ----------
 def count_by_classification_counter(series: pd.Series) -> Counter:
     """
     Retorna um Counter de classes (cada artigo contribui no máximo 1 vez por classe).
+    Correção: itera sobre os valores crus da série, preservando NaN como NaN.
     """
     counter = Counter()
-    for cell in series.astype(str).tolist():
+    for cell in series.tolist():   # <-- sem astype(str)
         items = split_items(cell)
         norm_items = {normalize_strict_value(x) for x in items}
         norm_items.discard("")  # remove vazios
@@ -165,9 +176,10 @@ def build_combination_label(items: set[str]) -> str:
 def count_by_combination_counter(series: pd.Series) -> Counter:
     """
     Retorna um Counter onde cada artigo contribui para exatamente 1 combinação (conjunto) dos seus itens.
+    Correção: itera sobre os valores crus da série, preservando NaN como NaN.
     """
     counter = Counter()
-    for cell in series.astype(str).tolist():
+    for cell in series.tolist():   # <-- sem astype(str)
         items = split_items(cell)
         norm_items = {normalize_strict_value(x) for x in items}
         norm_items.discard("")
@@ -256,6 +268,7 @@ def process_single_csv(csv_path: Path) -> dict[str, pd.DataFrame]:
     }
 
 
+# ---------- Escrita ----------
 def write_per_base_outputs(base_name: str, tables: dict[str, pd.DataFrame]) -> None:
     """
     Escreve os CSVs da base nos nomes/pastas solicitados.
@@ -268,7 +281,6 @@ def write_per_base_outputs(base_name: str, tables: dict[str, pd.DataFrame]) -> N
     tables["dados_utilizados"].to_csv(base_dir / f"dados_utilizados_{base_name}.csv", index=False, encoding="utf-8")
     tables["dados_utilizados_combinados"].to_csv(base_dir / f"dados_utilizados_combinados_{base_name}.csv", index=False, encoding="utf-8")
     tables["tecnicas_empregadas"].to_csv(base_dir / f"tecnicas_empregadas_{base_name}.csv", index=False, encoding="utf-8")
-    # REMOVIDO: não escrever "base_dir / 'dados_utilizados.csv'"
 
 
 def write_aggregated_outputs(agg_tables: dict[str, pd.DataFrame]) -> None:
@@ -308,6 +320,51 @@ def sum_counters(c1: Counter, c2: Counter) -> Counter:
     c_out.update(c1)
     c_out.update(c2)
     return c_out
+
+
+# ---------- Diagnóstico detalhado ----------
+def debug_nulls(csv_path: Path) -> None:
+    """
+    Diagnostica por que há mais "nulos" do que o esperado em 'Dados Utilizados'.
+    - Conta NaN reais.
+    - Identifica linhas que ficam sem itens após split+normalize.
+    - Exporta essas linhas para CSV em out/<Base>/debug_vazios_<Base>.csv
+    """
+    print(f"\n[DEBUG] Diagnóstico de nulos para: {csv_path.name}")
+    df = read_csv_safely(csv_path)
+    base = infer_base_name(csv_path)
+    out_dir = OUT_ROOT / base
+    ensure_dir(out_dir)
+
+    col_dados = find_column(df, ["Dados Utilizados", "Dados utilizados", "Dados_Utilizados"])
+
+    # Contagem de NaN reais
+    true_nan_count = df[col_dados].isna().sum()
+    print(f"[DEBUG] NaN verdadeiros na coluna '{col_dados}': {true_nan_count}")
+
+    # Linhas "vazias" após split+normalize (o que alimenta a contagem final)
+    empty_rows = []
+    for idx, cell in enumerate(df[col_dados].tolist()):
+        items = split_items(cell)               # devolve [] para NaN
+        norm_items = {normalize_strict_value(x) for x in items}
+        norm_items.discard("")
+        if len(norm_items) == 0:
+            # Coleta algumas colunas úteis para inspeção
+            record = {"_index": idx, col_dados: cell}
+            # tentar achar uma coluna de título (se existir)
+            for cand in ["Título", "Titulo", "Title", "title", "TITULO", "TÍTULO"]:
+                if cand in df.columns:
+                    record[cand] = df.loc[idx, cand]
+                    break
+            empty_rows.append(record)
+
+    empty_df = pd.DataFrame(empty_rows)
+    print(f"[DEBUG] Linhas que ficam vazias após split/normalize: {len(empty_df)}")
+
+    # Exporta para conferência
+    debug_path = out_dir / f"debug_vazios_{base}.csv"
+    empty_df.to_csv(debug_path, index=False, encoding="utf-8")
+    print(f"[DEBUG] Detalhe das linhas vazias exportado em: {debug_path}")
 
 
 def main():
