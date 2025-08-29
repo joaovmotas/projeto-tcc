@@ -228,7 +228,7 @@ def plot_grouped_bars(pivot: pd.DataFrame, out_path: Path, max_categories: int |
 
     # legenda fora do gráfico se houver muitas categorias
     ncols = 3 if n_types > 12 else 2 if n_types > 8 else 1
-    ax.legend(loc="upper left", bbox_to_anchor=(1.01, 1.0), borderaxespad=0., ncol=ncols, fontsize=9)
+    ax.legend(loc="upper left", ncol=ncols, fontsize=9, frameon=True)
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
     plt.tight_layout()
