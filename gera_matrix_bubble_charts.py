@@ -242,7 +242,7 @@ def plot_matrix_bubble(
     # rótulos laterais verticais (nomes dos eixos horizontais)
     y_mid = (max(ys) - 0) / 2
     ax.text(min(all_x) - 1.0, y_mid, left_axis_name, rotation=90, va="center", ha="center", fontsize=11, zorder=3)
-    ax.text(max(all_x) + 1.0, y_mid, right_axis_name, rotation=90, va="center", ha="center", fontsize=11, zorder=3)
+    ax.text(max(all_x) + 1.0, y_mid, right_axis_name, rotation=270, va="center", ha="center", fontsize=11, zorder=3)
 
     # ------------ RÓTULOS DO EIXO VERTICAL ------------
     for v in vert_labels:
