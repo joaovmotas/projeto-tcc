@@ -1,18 +1,17 @@
 # -*- coding: utf-8 -*-
 """
-Python 3.12 — Matrix Bubble Charts com tratamento de erros.
+Python 3.12 — Matrix Bubble Charts com rotulações completas e linhas atrás das bolhas.
 
-Gera 2 gráficos:
-1) Vertical = "Dados Utilizados"; laterais = "Tipo de Trabalho" (esq.) e "Contribuição do Trabalho" (dir.)
-2) Vertical = "Técnicas Empregadas"; laterais = "Tipo de Trabalho" (esq.) e "Contribuição do Trabalho" (dir.)
+Atualizações pedidas:
+- Rótulos das categorias-eixo: título no topo (Dados Utilizados / Técnicas Empregadas),
+  e rótulos laterais verticais: "Tipo de Trabalho" (esq.) e "Contribuição do Trabalho" (dir.).
+- Linhas da grade passam por trás das bolhas e textos (zorder ajustado).
+- Linha central segmentada (com "vãos" no entorno das legendas verticais).
+- Bolhas preenchidas de branco para esconder a grade atrás (facecolor="white").
 
 Tratamento de erros:
-- Arquivo de entrada inexistente -> mensagem clara e saída com código 1.
-- Formato inválido (não contém as colunas esperadas no padrão do CSV de referência) -> mensagem clara e saída com código 2.
-
-Saída:
-- ./out/<Base>/fig_matrix_dados_utilizados_<Base>.png
-- ./out/<Base>/fig_matrix_tecnicas_empregadas_<Base>.png
+- Arquivo inexistente -> código de saída 1
+- Formato inválido (colunas não encontradas no padrão do CSV de referência) -> saída 2
 """
 
 from __future__ import annotations
@@ -33,6 +32,8 @@ OUT_ROOT = Path("./Graficos/MatrixBubbleCharts")
 SHOW_PERCENT = True          # True = exibe porcentagens nas bolhas
 FIGSIZE = (12, 10)
 DPI = 200
+LEFT_AXIS_NAME = "Tipo de Trabalho"
+RIGHT_AXIS_NAME = "Contribuição do Trabalho"
 # ==================================================
 
 # Colunas esperadas (variações aceitas para compatibilidade)
@@ -154,10 +155,6 @@ def series_to_sets(series: pd.Series) -> list[set[str]]:
     return out
 
 
-def unique_sorted(values: list[str]) -> list[str]:
-    return sorted(set(values), key=lambda s: s.casefold())
-
-
 def cross_count(vert_sets: list[set[str]], side_sets: list[set[str]]) -> dict[tuple[str, str], int]:
     """Conta pares (v, s) por linha (um artigo conta no máximo 1 por par)."""
     counter: Counter[tuple[str, str]] = Counter()
@@ -198,11 +195,15 @@ def plot_matrix_bubble(
     counts_right: dict[tuple[str, str], int],
     show_percent: bool,
     out_path: Path,
+    left_axis_name: str = LEFT_AXIS_NAME,
+    right_axis_name: str = RIGHT_AXIS_NAME,
     figsize: tuple[int, int] = FIGSIZE,
     dpi: int = DPI,
 ) -> None:
     plt.figure(figsize=figsize, dpi=dpi)
     ax = plt.gca()
+    fig = plt.gcf()
+    fig.text(0.31, 0.90, title, ha='left', va='top', fontsize=14, weight='bold')
 
     n_y = len(vert_labels)
     ys = list(range(n_y))[::-1]
@@ -216,55 +217,72 @@ def plot_matrix_bubble(
     def size_for(c: int) -> float:
         return s_min if c <= 1 else s_min + (s_max - s_min) * (c - 1) / (max_count - 1 if max_count > 1 else 1)
 
-    # grade
+    # ------------ GRADE (atrás de tudo) ------------
     all_x = list(x_left.values()) + [0] + list(x_right.values())
-    ax.axvline(0, linewidth=1.5, color="black")
+    # linhas verticais (exceto central), zorder baixo
     for x in all_x:
-        if x != 0:
-            ax.axvline(x, linestyle="--", linewidth=0.8, color="gray", alpha=0.6)
+        if x == 0:
+            continue
+        ax.axvline(x, linestyle="--", linewidth=0.8, color="gray", alpha=0.6, zorder=0)
+    # linhas horizontais
     for y in ys:
-        ax.axhline(y, linestyle="--", linewidth=0.8, color="gray", alpha=0.6)
+        ax.axhline(y, linestyle="--", linewidth=0.8, color="gray", alpha=0.6, zorder=0)
+    # linha central segmentada com "vãos" ao redor dos rótulos verticais
+    for y in ys:
+        gap = 0.35  # tamanho do vão em torno do rótulo
+        ax.plot([0, 0], [y + 0.5, y + gap], color="black", linewidth=1.5, zorder=0)
+        ax.plot([0, 0], [y - gap, y - 0.5], color="black", linewidth=1.5, zorder=0)
 
-    # labels verticais (centro)
-    for v in vert_labels:
-        ax.text(0, y_pos[v], v, ha="center", va="center", fontsize=10)
-
-    # rótulos de colunas
+    # ------------ TEXTOS DE EIXO / TÍTULO ------------
+    # rótulos de colunas (em baixo)
     for lbl, x in x_left.items():
-        ax.text(x, -0.8, lbl, ha="center", va="top", fontsize=10)
+        ax.text(x, -0.9, lbl, ha="center", va="top", fontsize=10, zorder=3)
     for lbl, x in x_right.items():
-        ax.text(x, -0.8, lbl, ha="center", va="top", fontsize=10)
+        ax.text(x, -0.9, lbl, ha="center", va="top", fontsize=10, zorder=3)
+    # rótulos laterais verticais (nomes dos eixos horizontais)
+    y_mid = (max(ys) - 0) / 2
+    ax.text(min(all_x) - 1.0, y_mid, left_axis_name, rotation=90, va="center", ha="center", fontsize=11, zorder=3)
+    ax.text(max(all_x) + 1.0, y_mid, right_axis_name, rotation=90, va="center", ha="center", fontsize=11, zorder=3)
 
+    # ------------ RÓTULOS DO EIXO VERTICAL ------------
+    for v in vert_labels:
+        # fundo branco para evitar qualquer linha passando por trás do texto
+        ax.text(0, y_pos[v], v, ha="center", va="center", fontsize=10,
+                bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="none", alpha=0.9), zorder=2.5)
+
+    # totais por coluna para calcular %
     tot_left = totals_per_side(counts_left)
     tot_right = totals_per_side(counts_right)
 
-    # esquerda
+    # ------------ BOLHAS (na frente da grade) ------------
     for (v, s), c in counts_left.items():
         if c <= 0: 
             continue
-        ax.scatter([x_left[s]], [y_pos[v]], s=size_for(c), facecolors="none", edgecolors="black", linewidths=1.8)
-        ax.text(x_left[s], y_pos[v], f"{c}", ha="center", va="center", fontsize=10)
+        ax.scatter([x_left[s]], [y_pos[v]], s=size_for(c),
+                   facecolors="white", edgecolors="black", linewidths=1.8, zorder=3)
+        ax.text(x_left[s], y_pos[v], f"{c}", ha="center", va="center", fontsize=10, zorder=4)
         if show_percent and tot_left.get(s, 0) > 0:
             pct = 100.0 * c / tot_left[s]
-            ax.text(x_left[s], y_pos[v] + 0.28, f"{pct:.2f}%", ha="center", va="bottom", fontsize=7)
+            ax.text(x_left[s], y_pos[v] + 0.28, f"{pct:.2f}%", ha="center", va="bottom", fontsize=7, zorder=4)
 
-    # direita
     for (v, s), c in counts_right.items():
         if c <= 0: 
             continue
-        ax.scatter([x_right[s]], [y_pos[v]], s=size_for(c), facecolors="none", edgecolors="black", linewidths=1.8)
-        ax.text(x_right[s], y_pos[v], f"{c}", ha="center", va="center", fontsize=10)
+        ax.scatter([x_right[s]], [y_pos[v]], s=size_for(c),
+                   facecolors="white", edgecolors="black", linewidths=1.8, zorder=3)
+        ax.text(x_right[s], y_pos[v], f"{c}", ha="center", va="center", fontsize=10, zorder=4)
         if show_percent and tot_right.get(s, 0) > 0:
             pct = 100.0 * c / tot_right[s]
-            ax.text(x_right[s], y_pos[v] + 0.28, f"{pct:.2f}%", ha="center", va="bottom", fontsize=7)
+            ax.text(x_right[s], y_pos[v] + 0.28, f"{pct:.2f}%", ha="center", va="bottom", fontsize=7, zorder=4)
 
-    ax.set_title(title, fontsize=14, pad=16)
-    ax.set_xlim(min(all_x) - 0.8, max(all_x) + 0.8)
-    ax.set_ylim(-1.2, max(ys) + 1)
+    # limites, margem e esconder eixos
+    x_min, x_max = min(all_x) - 1.4, max(all_x) + 1.4
+    ax.set_xlim(x_min, x_max)
+    ax.set_ylim(-1.4, max(ys) + 1.0)
     ax.axis("off")
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    plt.tight_layout()
+    plt.tight_layout(rect=(0, 0, 1, 0.9))
     plt.savefig(out_path, dpi=dpi, bbox_inches="tight")
     plt.close()
 
@@ -309,7 +327,6 @@ def build_and_plot(csv_path: Path, show_percent: bool = SHOW_PERCENT) -> None:
     left_labels  = sort_by_freq(tipo_sets)
     right_labels = sort_by_freq(contrib_sets)
 
-    # Se alguma dimensão estiver vazia, é formato válido mas sem dados -> erro claro
     if not vert_dados and not vert_tecs:
         print("[ERRO] As colunas de eixo vertical estão vazias após o parsing. Verifique os dados.", file=sys.stderr)
         sys.exit(2)
@@ -321,14 +338,6 @@ def build_and_plot(csv_path: Path, show_percent: bool = SHOW_PERCENT) -> None:
         sys.exit(2)
 
     # 6) Contagens cruzadas
-    def cross_count(vert_sets: list[set[str]], side_sets: list[set[str]]) -> dict[tuple[str, str], int]:
-        counter: Counter[tuple[str, str]] = Counter()
-        for vset, sset in zip(vert_sets, side_sets):
-            for v in vset:
-                for s in sset:
-                    counter[(v, s)] += 1
-        return dict(counter)
-
     counts_dados_left   = cross_count(dados_sets, tipo_sets)
     counts_dados_right  = cross_count(dados_sets, contrib_sets)
     counts_tecs_left    = cross_count(tecs_sets,  tipo_sets)
