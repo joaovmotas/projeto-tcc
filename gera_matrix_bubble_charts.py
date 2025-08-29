@@ -229,7 +229,7 @@ def plot_matrix_bubble(
         ax.axhline(y, linestyle="--", linewidth=0.8, color="gray", alpha=0.6, zorder=0)
     # linha central segmentada com "vãos" ao redor dos rótulos verticais
     for y in ys:
-        gap = 0.35  # tamanho do vão em torno do rótulo
+        gap = 0.10  # tamanho do vão em torno do rótulo
         ax.plot([0, 0], [y + 0.5, y + gap], color="black", linewidth=1.5, zorder=0)
         ax.plot([0, 0], [y - gap, y - 0.5], color="black", linewidth=1.5, zorder=0)
 
