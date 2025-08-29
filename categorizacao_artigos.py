@@ -1,30 +1,21 @@
 # -*- coding: utf-8 -*-
 """
-FIX: contagem de nulos em 'Dados Utilizados' estava inflada porque o código
-convertia a série para string (.astype(str)), transformando NaN em 'nan'.
-Isso fazia 'nan' virar uma "classe" válida e ser contada.
+Python 3.12 — Processa múltiplos CSVs de bases (ex.: artigos_selecionados_IEEE.csv, artigos_selecionados_SpringerLink.csv)
+e gera saídas por base e agregadas (TodasBases).
 
-Correção:
-- NÃO converter mais a série para string antes do split.
-- Manter valores NaN como NaN e descartá-los corretamente em split_items().
-- Ajuste aplicado também na contagem de combinações.
+Saída por base (dentro de out/<NOMEDABASE>/):
+- contribuicao_trabalho_<NOMEDABASE>.csv
+- dados_utilizados_<NOMEDABASE>.csv
+- dados_utilizados_combinados_<NOMEDABASE>.csv
+- tecnicas_empregadas_<NOMEDABASE>.csv
+- tipo_trabalho_<NOMEDABASE>.csv
 
-Inclui um modo de DIAGNÓSTICO que mostra:
-- Quantos NaN verdadeiros existem na coluna.
-- Quais linhas seriam consideradas "vazias" pelo pipeline de split/normalize.
-- Exporta um CSV com essas linhas para conferência em ./out/<Base>/debug_vazios_<Base>.csv
-
-Python 3.12 — Processa múltiplos CSVs de bases e gera:
-- Por base (out/<Base>/):
-    * contribuicao_trabalho_<Base>.csv
-    * dados_utilizados_<Base>.csv
-    * dados_utilizados_combinados_<Base>.csv
-    * tecnicas_empregadas_<Base>.csv
-- Agregado (out/TodasBases/):
-    * contribuica_trabalho.csv
-    * dados_utilizados.csv
-    * dados_utilizados_combinados.csv
-    * tecnicas_empregadas.csv
+Saída agregada (dentro de out/TodasBases/):
+- contribuica_trabalho.csv
+- dados_utilizados.csv
+- dados_utilizados_combinados.csv
+- tecnicas_empregadas.csv
+- tipo_trabalho.csv
 """
 
 from __future__ import annotations
@@ -39,9 +30,13 @@ import pandas as pd
 
 
 # ========== CONFIGURAÇÃO ==========
-INPUT_DIR = Path("./artigos_selecionados")      # Onde estão os CSVs de entrada
-DISCOVER_PATTERNS = ["*.csv"]      # Padrões de descoberta
-OUT_ROOT = Path("./out")           # Pasta de saída
+INPUT_DIR = Path("./artigos_selecionados")     # Raiz onde estão os CSVs de entrada
+DISCOVER_PATTERNS = ["*.csv"]     # Padrões de descoberta
+OUT_ROOT = Path("./out")          # Pasta de saída
+
+# Opcional: rodar diagnóstico somente para um arquivo específico (ou deixe None)
+DIAG_CSV: str | None = None
+# ==================================
 
 
 # ---------- Utilidades de IO ----------
@@ -145,14 +140,13 @@ def split_items(cell) -> list[str]:
     return [p.strip() for p in parts if p and p.strip()]
 
 
-# ---------- Contagens (CORRIGIDAS: sem astype(str)) ----------
+# ---------- Contagens ----------
 def count_by_classification_counter(series: pd.Series) -> Counter:
     """
     Retorna um Counter de classes (cada artigo contribui no máximo 1 vez por classe).
-    Correção: itera sobre os valores crus da série, preservando NaN como NaN.
     """
     counter = Counter()
-    for cell in series.tolist():   # <-- sem astype(str)
+    for cell in series.tolist():   # preserva NaN como NaN
         items = split_items(cell)
         norm_items = {normalize_strict_value(x) for x in items}
         norm_items.discard("")  # remove vazios
@@ -176,10 +170,9 @@ def build_combination_label(items: set[str]) -> str:
 def count_by_combination_counter(series: pd.Series) -> Counter:
     """
     Retorna um Counter onde cada artigo contribui para exatamente 1 combinação (conjunto) dos seus itens.
-    Correção: itera sobre os valores crus da série, preservando NaN como NaN.
     """
     counter = Counter()
-    for cell in series.tolist():   # <-- sem astype(str)
+    for cell in series.tolist():   # preserva NaN como NaN
         items = split_items(cell)
         norm_items = {normalize_strict_value(x) for x in items}
         norm_items.discard("")
@@ -234,11 +227,12 @@ def infer_base_name(csv_path: Path) -> str:
 # ---------- Processamento de um arquivo ----------
 def process_single_csv(csv_path: Path) -> dict[str, pd.DataFrame]:
     """
-    Processa um CSV e retorna os 4 DataFrames:
+    Processa um CSV e retorna os 5 DataFrames:
     - dados_utilizados
     - tecnicas_empregadas
     - contribuica_trabalho
     - dados_utilizados_combinados
+    - tipo_trabalho
     """
     df = read_csv_safely(csv_path)
 
@@ -254,17 +248,28 @@ def process_single_csv(csv_path: Path) -> dict[str, pd.DataFrame]:
             "Contribuicao Trabalho",
         ],
     )
+    col_tipo_trab = find_column(
+        df,
+        [
+            "Tipo de Trabalho",
+            "Tipo do Trabalho",
+            "Tipo Trabalho",
+            "Tipo",
+        ],
+    )
 
     cnt_dados = count_by_classification_counter(df[col_dados])
     cnt_tec = count_by_classification_counter(df[col_tec])
     cnt_contrib = count_by_classification_counter(df[col_contrib])
     cnt_dados_combo = count_by_combination_counter(df[col_dados])
+    cnt_tipo_trab = count_by_classification_counter(df[col_tipo_trab])
 
     return {
         "dados_utilizados": counter_to_df(cnt_dados),
         "tecnicas_empregadas": counter_to_df(cnt_tec),
         "contribuica_trabalho": counter_to_df(cnt_contrib),
         "dados_utilizados_combinados": counter_to_df(cnt_dados_combo),
+        "tipo_trabalho": counter_to_df(cnt_tipo_trab),
     }
 
 
@@ -281,6 +286,7 @@ def write_per_base_outputs(base_name: str, tables: dict[str, pd.DataFrame]) -> N
     tables["dados_utilizados"].to_csv(base_dir / f"dados_utilizados_{base_name}.csv", index=False, encoding="utf-8")
     tables["dados_utilizados_combinados"].to_csv(base_dir / f"dados_utilizados_combinados_{base_name}.csv", index=False, encoding="utf-8")
     tables["tecnicas_empregadas"].to_csv(base_dir / f"tecnicas_empregadas_{base_name}.csv", index=False, encoding="utf-8")
+    tables["tipo_trabalho"].to_csv(base_dir / f"tipo_trabalho_{base_name}.csv", index=False, encoding="utf-8")
 
 
 def write_aggregated_outputs(agg_tables: dict[str, pd.DataFrame]) -> None:
@@ -294,6 +300,7 @@ def write_aggregated_outputs(agg_tables: dict[str, pd.DataFrame]) -> None:
     agg_tables["dados_utilizados"].to_csv(tgt / "dados_utilizados.csv", index=False, encoding="utf-8")
     agg_tables["dados_utilizados_combinados"].to_csv(tgt / "dados_utilizados_combinados.csv", index=False, encoding="utf-8")
     agg_tables["tecnicas_empregadas"].to_csv(tgt / "tecnicas_empregadas.csv", index=False, encoding="utf-8")
+    agg_tables["tipo_trabalho"].to_csv(tgt / "tipo_trabalho.csv", index=False, encoding="utf-8")
 
 
 # ---------- Descoberta de entradas ----------
@@ -322,13 +329,10 @@ def sum_counters(c1: Counter, c2: Counter) -> Counter:
     return c_out
 
 
-# ---------- Diagnóstico detalhado ----------
+# ---------- Diagnóstico (opcional) ----------
 def debug_nulls(csv_path: Path) -> None:
     """
-    Diagnostica por que há mais "nulos" do que o esperado em 'Dados Utilizados'.
-    - Conta NaN reais.
-    - Identifica linhas que ficam sem itens após split+normalize.
-    - Exporta essas linhas para CSV em out/<Base>/debug_vazios_<Base>.csv
+    Diagnostica nulos em 'Dados Utilizados' (opcional).
     """
     print(f"\n[DEBUG] Diagnóstico de nulos para: {csv_path.name}")
     df = read_csv_safely(csv_path)
@@ -338,20 +342,16 @@ def debug_nulls(csv_path: Path) -> None:
 
     col_dados = find_column(df, ["Dados Utilizados", "Dados utilizados", "Dados_Utilizados"])
 
-    # Contagem de NaN reais
     true_nan_count = df[col_dados].isna().sum()
     print(f"[DEBUG] NaN verdadeiros na coluna '{col_dados}': {true_nan_count}")
 
-    # Linhas "vazias" após split+normalize (o que alimenta a contagem final)
     empty_rows = []
     for idx, cell in enumerate(df[col_dados].tolist()):
-        items = split_items(cell)               # devolve [] para NaN
+        items = split_items(cell)
         norm_items = {normalize_strict_value(x) for x in items}
         norm_items.discard("")
         if len(norm_items) == 0:
-            # Coleta algumas colunas úteis para inspeção
             record = {"_index": idx, col_dados: cell}
-            # tentar achar uma coluna de título (se existir)
             for cand in ["Título", "Titulo", "Title", "title", "TITULO", "TÍTULO"]:
                 if cand in df.columns:
                     record[cand] = df.loc[idx, cand]
@@ -359,16 +359,19 @@ def debug_nulls(csv_path: Path) -> None:
             empty_rows.append(record)
 
     empty_df = pd.DataFrame(empty_rows)
-    print(f"[DEBUG] Linhas que ficam vazias após split/normalize: {len(empty_df)}")
-
-    # Exporta para conferência
     debug_path = out_dir / f"debug_vazios_{base}.csv"
     empty_df.to_csv(debug_path, index=False, encoding="utf-8")
-    print(f"[DEBUG] Detalhe das linhas vazias exportado em: {debug_path}")
+    print(f"[DEBUG] Linhas vazias após split/normalize: {len(empty_df)} | Exportado em: {debug_path}")
 
 
 def main():
     ensure_dir(OUT_ROOT)
+
+    if DIAG_CSV:
+        try:
+            debug_nulls(Path(DIAG_CSV))
+        except Exception as e:
+            print(f"[WARN] Falha no diagnóstico de {DIAG_CSV}: {e}", file=sys.stderr)
 
     csv_files = discover_input_csvs()
     if not csv_files:
@@ -380,6 +383,7 @@ def main():
     agg_cnt_tec = Counter()
     agg_cnt_contrib = Counter()
     agg_cnt_dados_combo = Counter()
+    agg_cnt_tipo_trab = Counter()
 
     print(f"[INFO] Encontrados {len(csv_files)} arquivo(s) CSV para processar:")
     for p in csv_files:
@@ -404,6 +408,7 @@ def main():
             agg_cnt_tec = sum_counters(agg_cnt_tec, df_to_counter(tables["tecnicas_empregadas"]))
             agg_cnt_contrib = sum_counters(agg_cnt_contrib, df_to_counter(tables["contribuica_trabalho"]))
             agg_cnt_dados_combo = sum_counters(agg_cnt_dados_combo, df_to_counter(tables["dados_utilizados_combinados"]))
+            agg_cnt_tipo_trab = sum_counters(agg_cnt_tipo_trab, df_to_counter(tables["tipo_trabalho"]))
 
         except Exception as e:
             print(f"[ERRO] Falha ao processar {csv_path}: {e}", file=sys.stderr)
@@ -414,6 +419,7 @@ def main():
         "tecnicas_empregadas": counter_to_df(agg_cnt_tec),
         "contribuica_trabalho": counter_to_df(agg_cnt_contrib),
         "dados_utilizados_combinados": counter_to_df(agg_cnt_dados_combo),
+        "tipo_trabalho": counter_to_df(agg_cnt_tipo_trab),
     }
 
     # Grava agregados

@@ -3,7 +3,7 @@ Logistic Regression,34
 Decision Tree,18
 Random Forest,18
 Support Vector Machine,16
-Naive Bayes,14
+Naive Bayes,15
 Neural Network,14
 KNN,12
 XGBoost,9
@@ -11,6 +11,6 @@ LightGBM,3
 ANN,2
 Baysian Networks,1
 Clustering,1
-Gaussian Naive Bayes,1
+Linear Regression,1
 Multi Layer Perceptrons,1
 RNN,1
