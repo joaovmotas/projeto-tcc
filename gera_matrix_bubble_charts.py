@@ -30,7 +30,7 @@ import matplotlib.pyplot as plt
 INPUT_CSV = Path("./ArtigosSelecionados/artigos_selecionados_TodasBases.csv")
 OUT_ROOT = Path("./Graficos/MatrixBubbleCharts")
 SHOW_PERCENT = True          # True = exibe porcentagens nas bolhas
-FIGSIZE = (12, 10)
+FIGSIZE = (20, 16)
 DPI = 200
 LEFT_AXIS_NAME = "Tipo de Trabalho"
 RIGHT_AXIS_NAME = "Contribuição do Trabalho"
@@ -252,8 +252,8 @@ def plot_matrix_bubble(
     # rótulos laterais verticais (nomes dos eixos horizontais)
     # y_mid = (max(ys) - 0) / 2
     y_baseline = -0.5
-    ax.text(min(all_x) - 1.0, y_baseline, left_axis_name, rotation=90, va="center", ha="center", fontsize=11, zorder=3)
-    ax.text(max(all_x) + 1.0, y_baseline, right_axis_name, rotation=270, va="center", ha="center", fontsize=11, zorder=3)
+    ax.text(min(all_x) - 0.4, y_baseline, left_axis_name, rotation=90, va="center", ha="center", fontsize=11, zorder=3)
+    ax.text(max(all_x) + 0.4, y_baseline, right_axis_name, rotation=270, va="center", ha="center", fontsize=11, zorder=3)
 
     # ------------ RÓTULOS DO EIXO VERTICAL ------------
     for v in vert_labels:
@@ -287,9 +287,9 @@ def plot_matrix_bubble(
             ax.text(x_right[s], y_pos[v] + 0.28, f"{pct:.2f}%", ha="center", va="bottom", fontsize=7, zorder=4)
 
     # limites, margem e esconder eixos
-    x_min, x_max = min(all_x) - 1.4, max(all_x) + 1.4
+    x_min, x_max = min(all_x) - 0.4, max(all_x) + 0.4
     ax.set_xlim(x_min, x_max)
-    ax.set_ylim(-1.4, max(ys) + 1.0)
+    ax.set_ylim(-0.8, max(ys) + 1.0)
     ax.axis("off")
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
