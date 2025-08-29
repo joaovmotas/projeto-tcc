@@ -30,9 +30,9 @@ import pandas as pd
 
 
 # ========== CONFIGURAÇÃO ==========
-INPUT_DIR = Path("./artigos_selecionados")     # Raiz onde estão os CSVs de entrada
+INPUT_DIR = Path("./ArtigosSelecionados/PorBase")     # Raiz onde estão os CSVs de entrada
 DISCOVER_PATTERNS = ["*.csv"]     # Padrões de descoberta
-OUT_ROOT = Path("./out")          # Pasta de saída
+OUT_ROOT = Path("./ArtigosCategorizados")          # Pasta de saída
 
 # Opcional: rodar diagnóstico somente para um arquivo específico (ou deixe None)
 DIAG_CSV: str | None = None
