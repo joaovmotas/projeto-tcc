@@ -1,27 +1,36 @@
 # -*- coding: utf-8 -*-
 """
-Python 3.12 — Processa múltiplos CSVs de bases (ex.: artigos_selecionados_IEEE.csv, artigos_selecionados_SpringerLink.csv)
-e gera saídas por base e agregadas (TodasBases).
+categorizacao_artigos.py — Python 3.12
 
-Saída por base (dentro de out/<NOMEDABASE>/):
-- contribuicao_trabalho_<NOMEDABASE>.csv
-- dados_utilizados_<NOMEDABASE>.csv
-- dados_utilizados_combinados_<NOMEDABASE>.csv
-- tecnicas_empregadas_<NOMEDABASE>.csv
-- tipo_trabalho_<NOMEDABASE>.csv
+NOVA LÓGICA: a entrada agora é um ÚNICO CSV contendo artigos de TODAS as bases.
+Existe uma coluna "Base" indicando a qual base cada artigo pertence.
 
-Saída agregada (dentro de out/TodasBases/):
+O script segmenta por "Base" e gera as MESMAS tabelas para cada base com sufixo
+do nome da base. Além disso, gera as tabelas agregadas (com todos os artigos)
+em out/TodasBases/ sem sufixo.
+
+Tabelas geradas:
+- contribuicao_trabalho_<BASE>.csv
+- dados_utilizados_<BASE>.csv
+- dados_utilizados_combinados_<BASE>.csv
+- tecnicas_empregadas_<BASE>.csv
+- tipo_trabalho_<BASE>.csv
+e em out/TodasBases/:
 - contribuica_trabalho.csv
 - dados_utilizados.csv
 - dados_utilizados_combinados.csv
 - tecnicas_empregadas.csv
 - tipo_trabalho.csv
+
+Tratamento de erros:
+- Arquivo inexistente -> saída 1
+- Formato inválido (colunas obrigatórias ausentes) -> saída 2
 """
 
 from __future__ import annotations
 
-import re
 import sys
+import re
 import unicodedata
 from collections import Counter
 from pathlib import Path
@@ -30,12 +39,8 @@ import pandas as pd
 
 
 # ========== CONFIGURAÇÃO ==========
-INPUT_DIR = Path("./ArtigosSelecionados/PorBase")     # Raiz onde estão os CSVs de entrada
-DISCOVER_PATTERNS = ["*.csv"]     # Padrões de descoberta
-OUT_ROOT = Path("./ArtigosCategorizados")          # Pasta de saída
-
-# Opcional: rodar diagnóstico somente para um arquivo específico (ou deixe None)
-DIAG_CSV: str | None = None
+INPUT_FILE = Path("./ArtigosSelecionados/artigos_selecionados_TodasBases.csv")  # caminho do CSV único
+OUT_ROOT = Path("./ArtigosCategorizados")                           # pasta raiz de saída
 # ==================================
 
 
@@ -194,48 +199,24 @@ def counter_to_df(counter: Counter) -> pd.DataFrame:
     return df_out
 
 
-# ---------- Inferência do nome da base a partir do arquivo ----------
-KNOWN_BASES = [
-    "SpringerLink", "IEEE", "ACM", "Scopus", "ScienceDirect", "Web of Science", "WoS",
-    "SciELO", "PubMed", "arXiv", "Google Scholar", "GoogleScholar", "ERIC", "Elsevier"
-]
-
-
-def infer_base_name(csv_path: Path) -> str:
+# ---------- Sanitização do valor da base ----------
+def sanitize_base_value(val: str) -> str:
     """
-    Infere um nome de base a partir do nome do arquivo.
-    1) Procura KNOWN_BASES como substring (case-insensitive)
-    2) Caso não encontre, usa última palavra alfabética "significativa"
-    3) Normaliza para [A-Za-z0-9_], sem espaços
+    Converte o valor da coluna 'Base' em um identificador de pasta/sufixo:
+    - remove acentos e caracteres especiais
+    - tira espaços
+    - se ficar vazio, usa 'Base'
     """
-    stem = csv_path.stem
-    low = stem.lower()
-    for base in KNOWN_BASES:
-        if base.lower().replace(" ", "") in low.replace(" ", ""):
-            candidate = base
-            break
-    else:
-        tokens = re.findall(r"[A-Za-zÀ-ÿ]+", stem)
-        generic = {t.lower() for t in ["artigos", "selecionados", "selecionadas", "exportacao", "bases", "base", "selecionado", "selecionada", "v", "versao"]}
-        meaningful = [t for t in tokens if t.lower() not in generic]
-        candidate = meaningful[-1] if meaningful else "Base"
-
-    candidate = normalize_strict_value(candidate).replace(" ", "")
-    return candidate or "Base"
+    name = normalize_strict_value(str(val)).replace(" ", "")
+    return name or "Base"
 
 
-# ---------- Processamento de um arquivo ----------
-def process_single_csv(csv_path: Path) -> dict[str, pd.DataFrame]:
+# ---------- Processamento de um DataFrame (slice por base) ----------
+def process_df_slice(df: pd.DataFrame) -> dict[str, pd.DataFrame]:
     """
-    Processa um CSV e retorna os 5 DataFrames:
-    - dados_utilizados
-    - tecnicas_empregadas
-    - contribuica_trabalho
-    - dados_utilizados_combinados
-    - tipo_trabalho
+    Recebe um DataFrame já filtrado (uma base específica ou o conjunto completo)
+    e retorna os 5 DataFrames de saída.
     """
-    df = read_csv_safely(csv_path)
-
     col_dados = find_column(df, ["Dados Utilizados", "Dados utilizados", "Dados_Utilizados"])
     col_tec = find_column(df, ["Técnicas Empregadas", "Tecnicas Empregadas", "Tecnicas", "Técnicas"])
     col_contrib = find_column(
@@ -277,7 +258,6 @@ def process_single_csv(csv_path: Path) -> dict[str, pd.DataFrame]:
 def write_per_base_outputs(base_name: str, tables: dict[str, pd.DataFrame]) -> None:
     """
     Escreve os CSVs da base nos nomes/pastas solicitados.
-    (Sem gerar "dados_utilizados.csv" sem sufixo.)
     """
     base_dir = OUT_ROOT / base_name
     ensure_dir(base_dir)
@@ -303,135 +283,101 @@ def write_aggregated_outputs(agg_tables: dict[str, pd.DataFrame]) -> None:
     agg_tables["tipo_trabalho"].to_csv(tgt / "tipo_trabalho.csv", index=False, encoding="utf-8")
 
 
-# ---------- Descoberta de entradas ----------
-def discover_input_csvs() -> list[Path]:
+# ---------- Validação do formato (inclui coluna 'Base') ----------
+REQUIRED_BLOCKS = {
+    "dados": ["Dados Utilizados", "Dados utilizados", "Dados_Utilizados"],
+    "tecnicas": ["Técnicas Empregadas", "Tecnicas Empregadas", "Tecnicas", "Técnicas"],
+    "contrib": ["Contribuição do Trabalho", "Contribuicao do Trabalho", "Contribuição de Trabalho", "Contribuicao de Trabalho"],
+    "tipo": ["Tipo de Trabalho", "Tipo do Trabalho", "Tipo Trabalho", "Tipo"],
+    "base": ["Base", "Fonte", "Base de Dados", "Fonte de Dados"],
+}
+
+
+def validate_input_format(df: pd.DataFrame) -> dict[str, str]:
     """
-    Descobre CSVs no INPUT_DIR conforme padrões, filtrando por nomes que contenham 'selecionad' (selecionados/selecionadas).
+    Verifica a presença das colunas conceituais exigidas, incluindo 'Base'.
+    Retorna um mapeamento chave interna -> nome real da coluna.
     """
-    results: list[Path] = []
-    for pattern in DISCOVER_PATTERNS:
-        results.extend(INPUT_DIR.glob(pattern))
-    selected: list[Path] = []
-    for p in results:
-        stem_norm = normalize_for_matching(p.stem)
-        if "selecionad" in stem_norm:
-            selected.append(p)
-    if not selected:
-        selected = [p for p in results if p.is_file() and p.suffix.lower() == ".csv"]
-    return sorted(set(selected))
+    resolved: dict[str, str] = {}
+    missing = []
+    for key, variants in REQUIRED_BLOCKS.items():
+        try:
+            resolved[key] = find_column(df, variants)
+        except KeyError:
+            missing.append((key, variants))
+
+    if missing:
+        msg = ["[ERRO] Formato inválido: não foi possível localizar as seguintes colunas obrigatórias:"]
+        for key, variants in missing:
+            msg.append(f"  - {key}: aceita variações {variants}")
+        msg.append(f"Colunas disponíveis no arquivo: {list(df.columns)}")
+        raise ValueError("\n".join(msg))
+
+    return resolved
 
 
-# ---------- Agregação incremental ----------
-def sum_counters(c1: Counter, c2: Counter) -> Counter:
-    c_out = Counter()
-    c_out.update(c1)
-    c_out.update(c2)
-    return c_out
-
-
-# ---------- Diagnóstico (opcional) ----------
-def debug_nulls(csv_path: Path) -> None:
-    """
-    Diagnostica nulos em 'Dados Utilizados' (opcional).
-    """
-    print(f"\n[DEBUG] Diagnóstico de nulos para: {csv_path.name}")
-    df = read_csv_safely(csv_path)
-    base = infer_base_name(csv_path)
-    out_dir = OUT_ROOT / base
-    ensure_dir(out_dir)
-
-    col_dados = find_column(df, ["Dados Utilizados", "Dados utilizados", "Dados_Utilizados"])
-
-    true_nan_count = df[col_dados].isna().sum()
-    print(f"[DEBUG] NaN verdadeiros na coluna '{col_dados}': {true_nan_count}")
-
-    empty_rows = []
-    for idx, cell in enumerate(df[col_dados].tolist()):
-        items = split_items(cell)
-        norm_items = {normalize_strict_value(x) for x in items}
-        norm_items.discard("")
-        if len(norm_items) == 0:
-            record = {"_index": idx, col_dados: cell}
-            for cand in ["Título", "Titulo", "Title", "title", "TITULO", "TÍTULO"]:
-                if cand in df.columns:
-                    record[cand] = df.loc[idx, cand]
-                    break
-            empty_rows.append(record)
-
-    empty_df = pd.DataFrame(empty_rows)
-    debug_path = out_dir / f"debug_vazios_{base}.csv"
-    empty_df.to_csv(debug_path, index=False, encoding="utf-8")
-    print(f"[DEBUG] Linhas vazias após split/normalize: {len(empty_df)} | Exportado em: {debug_path}")
-
-
+# ---------- MAIN ----------
 def main():
     ensure_dir(OUT_ROOT)
 
-    if DIAG_CSV:
-        try:
-            debug_nulls(Path(DIAG_CSV))
-        except Exception as e:
-            print(f"[WARN] Falha no diagnóstico de {DIAG_CSV}: {e}", file=sys.stderr)
-
-    csv_files = discover_input_csvs()
-    if not csv_files:
-        print(f"[ERRO] Nenhum CSV encontrado em {INPUT_DIR}. Ajuste INPUT_DIR/DISCOVER_PATTERNS.", file=sys.stderr)
+    # 1) Arquivo existe?
+    if not INPUT_FILE.exists():
+        print(f"[ERRO] Arquivo não encontrado: {INPUT_FILE}", file=sys.stderr)
         sys.exit(1)
 
-    # Acumuladores globais (para TodasBases)
-    agg_cnt_dados = Counter()
-    agg_cnt_tec = Counter()
-    agg_cnt_contrib = Counter()
-    agg_cnt_dados_combo = Counter()
-    agg_cnt_tipo_trab = Counter()
+    # 2) Leitura segura
+    try:
+        df = read_csv_safely(INPUT_FILE)
+    except Exception as e:
+        print(f"[ERRO] Falha ao ler o CSV '{INPUT_FILE}': {e}", file=sys.stderr)
+        sys.exit(1)
 
-    print(f"[INFO] Encontrados {len(csv_files)} arquivo(s) CSV para processar:")
-    for p in csv_files:
-        print(f"  - {p}")
+    # 3) Validação do formato (inclui coluna 'Base')
+    try:
+        cols = validate_input_format(df)
+    except ValueError as ve:
+        print(str(ve), file=sys.stderr)
+        print("[DICA] Garanta que o arquivo segue o mesmo padrão do 'artigos_selecionados_TodasBases.csv'.", file=sys.stderr)
+        sys.exit(2)
 
-    for csv_path in csv_files:
-        try:
-            base_name = infer_base_name(csv_path)
-            print(f"\n[PROCESSANDO] {csv_path.name}  -> base: {base_name}")
+    base_col = cols["base"]
 
-            # Processa arquivo
-            tables = process_single_csv(csv_path)
-
-            # Grava por base
-            write_per_base_outputs(base_name, tables)
-
-            # Atualiza agregados
-            def df_to_counter(df: pd.DataFrame) -> Counter:
-                return Counter(dict(zip(df["Classificação"], df["Número de Artigos"])))
-
-            agg_cnt_dados = sum_counters(agg_cnt_dados, df_to_counter(tables["dados_utilizados"]))
-            agg_cnt_tec = sum_counters(agg_cnt_tec, df_to_counter(tables["tecnicas_empregadas"]))
-            agg_cnt_contrib = sum_counters(agg_cnt_contrib, df_to_counter(tables["contribuica_trabalho"]))
-            agg_cnt_dados_combo = sum_counters(agg_cnt_dados_combo, df_to_counter(tables["dados_utilizados_combinados"]))
-            agg_cnt_tipo_trab = sum_counters(agg_cnt_tipo_trab, df_to_counter(tables["tipo_trabalho"]))
-
-        except Exception as e:
-            print(f"[ERRO] Falha ao processar {csv_path}: {e}", file=sys.stderr)
-
-    # Constrói DataFrames agregados
-    agg_tables = {
-        "dados_utilizados": counter_to_df(agg_cnt_dados),
-        "tecnicas_empregadas": counter_to_df(agg_cnt_tec),
-        "contribuica_trabalho": counter_to_df(agg_cnt_contrib),
-        "dados_utilizados_combinados": counter_to_df(agg_cnt_dados_combo),
-        "tipo_trabalho": counter_to_df(agg_cnt_tipo_trab),
-    }
-
-    # Grava agregados
+    # 4) Tabelas agregadas (TodasBases)
+    print("\n[PROCESSANDO] Agregado (todas as bases)")
+    agg_tables = process_df_slice(df)
     write_aggregated_outputs(agg_tables)
 
-    # Prints rápidos
-    print("\n[OK] Arquivos por base gerados em ./out/<Base>/")
-    print("[OK] Arquivos agregados gerados em ./out/TodasBases/")
+    # 5) Tabelas por base (segmentando pela coluna 'Base')
+    bases_raw = (
+        df[base_col]
+        .dropna()
+        .astype(str)
+        .map(lambda x: x.strip())
+        .replace("", pd.NA)
+        .dropna()
+        .unique()
+        .tolist()
+    )
+
+    if not bases_raw:
+        print("[AVISO] Coluna 'Base' não possui valores utilizáveis. Nada será gerado por base.", file=sys.stderr)
+    else:
+        print(f"[INFO] Bases detectadas: {bases_raw}")
+
+    for raw in sorted(bases_raw, key=lambda s: s.casefold()):
+        base_name = sanitize_base_value(raw)
+        print(f"  - Gerando tabelas para base: {raw}  -> pasta/sufixo: {base_name}")
+        df_base = df[df[base_col].astype(str).str.strip() == raw]
+        tables = process_df_slice(df_base)
+        write_per_base_outputs(base_name, tables)
+
+    # 6) Prints rápidos do agregado
+    print("\n[OK] Arquivos agregados gerados em ./ArtigosCategorizados/TodasBases/")
+    print("[OK] Arquivos por base gerados em ./ArtigosCategorizados/<Base>/")
     print("\n[RESUMO — TodasBases]")
-    for k, df in agg_tables.items():
+    for k, dfx in agg_tables.items():
         print(f"\n=== {k} ===")
-        print(df.to_string(index=False))
+        print(dfx.to_string(index=False))
 
 
 if __name__ == "__main__":
