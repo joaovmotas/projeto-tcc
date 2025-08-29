@@ -232,13 +232,23 @@ def plot_matrix_bubble(
         gap = 0.10  # tamanho do vão em torno do rótulo
         ax.plot([0, 0], [y + 0.5, y + gap], color="black", linewidth=1.5, zorder=0)
         ax.plot([0, 0], [y - gap, y - 0.5], color="black", linewidth=1.5, zorder=0)
+    
+    # linhas horizontais segmentadas na base (com "vãos" ao redor dos rótulos de colunas)
+    X_LABEL_Y = -0.5
+    gap_x = 0.4
+    xs_all = list(x_left.values()) + list(x_right.values())
+    for x in xs_all:
+        # Segmento à esquerda do rótulo
+        ax.plot([x - 0.5, x - gap_x], [X_LABEL_Y, X_LABEL_Y], color="black", linewidth=1.5, zorder=0)
+        # Segmento à direita do rótulo
+        ax.plot([x + gap_x, x + 0.5], [X_LABEL_Y, X_LABEL_Y], color="black", linewidth=1.5, zorder=0) 
 
     # ------------ TEXTOS DE EIXO / TÍTULO ------------
     # rótulos de colunas (em baixo)
     for lbl, x in x_left.items():
-        ax.text(x, -0.9, lbl, ha="center", va="top", fontsize=10, zorder=3)
+        ax.text(x, X_LABEL_Y, lbl, ha="center", va="top", fontsize=10, zorder=3)
     for lbl, x in x_right.items():
-        ax.text(x, -0.9, lbl, ha="center", va="top", fontsize=10, zorder=3)
+        ax.text(x, X_LABEL_Y, lbl, ha="center", va="top", fontsize=10, zorder=3)
     # rótulos laterais verticais (nomes dos eixos horizontais)
     y_mid = (max(ys) - 0) / 2
     ax.text(min(all_x) - 1.0, y_mid, left_axis_name, rotation=90, va="center", ha="center", fontsize=11, zorder=3)
